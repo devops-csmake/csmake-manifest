@@ -86,8 +86,8 @@ class CsversionDumpFile(CsmakeAspect):
             tarorder = ['NAME', 'BUILD_INDEX', 'SHA1', 'TIME']
             self._ensureDirectoryExists(options['sources-file'])
             with open(options['sources-file'], 'w') as csversionfile:
-                for repo, tagdict in versinfo['sources'].iteritems():
-                    for tag, value in tagdict.iteritems():
+                for repo, tagdict in versinfo['sources'].items():
+                    for tag, value in tagdict.items():
                         pulltype, pullvalues = value
                         if pulltype == 'git':
                             line = gitprefix % (tag, repo)

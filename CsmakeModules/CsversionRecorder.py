@@ -73,11 +73,11 @@ class CsversionRecorder(CsmakeModuleAllPhase):
     REQUIRED_OPTIONS = ['file']
 
     def _updateRecords(self, resultDict, sourceDict):
-        for key, value in sourceDict.iteritems():
+        for key, value in sourceDict.items():
             if key not in resultDict:
                 resultDict[key] = value
             else:
-                for subkey, subvalue in value.iteritems():
+                for subkey, subvalue in value.items():
                     if subkey not in resultDict[key]:
                         resultDict[key][subkey] = subvalue
                     else:
@@ -93,9 +93,9 @@ class CsversionRecorder(CsmakeModuleAllPhase):
         for other in otherRecordsFileList:
             other = other.strip()
             if os.path.exists(other):
-                with open(other) as pickledState:
+                with open(other, 'rb') as pickledState:
                     self._updateRecords(
-                        resultCsversion, 
+                        resultCsversion,
                         pickle.load(pickledState) )
         return resultCsversion
 
@@ -108,7 +108,7 @@ class CsversionRecorder(CsmakeModuleAllPhase):
         else:
             self.log.info("No current __Csversion__ exists")
         self._ensureDirectoryExists(options['file'])
-        with open(options['file'], 'w') as pickledState:
+        with open(options['file'], 'wb') as pickledState:
             pickle.dump(resultCsversion, pickledState)
         self.env.env['__Csversion__'] = resultCsversion
         self.log.devdebug("Pickled __Csversion__ as: %s", str(resultCsversion))

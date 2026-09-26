@@ -31,7 +31,6 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # </copyright>
 from Csmake.CsmakeAspect import CsmakeAspect
-import urlparse
 from datetime import datetime
 import sys
 

@@ -31,7 +31,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # </copyright>
 from Csmake.CsmakeAspect import CsmakeAspect
-import urlparse
+import urllib.parse
 
 class CsversionRecordGit(CsmakeAspect):
     """Purpose: Record the version of the git repos pulled using GitDependent 
@@ -70,7 +70,7 @@ class CsversionRecordGit(CsmakeAspect):
             self.log.error('    %s: %s', code, message)
             self.log.failed()
             return False
-        parsedurl = urlparse.urlparse(gitoptions['URL'])
+        parsedurl = urllib.parse.urlparse(gitoptions['URL'])
         repo = parsedurl.path
         if repo[0] == '/':
             repo = repo[1:]

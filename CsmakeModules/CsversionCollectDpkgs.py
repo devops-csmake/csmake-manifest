@@ -66,11 +66,12 @@ class CsversionCollectDpkgs(CsmakeModule):
         versdict = self.env.env['__Csversion__']['sources']
         mountpath = options['chroot']
         p = subprocess.Popen(
-            ["sudo", "-E", "chroot", mountpath, 
-                 "dpkg-query", "--show", 
+            ["sudo", "-E", "chroot", mountpath,
+                 "dpkg-query", "--show",
                  "-f", "${binary:Package} (${Version})\\n"],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE )
+            stderr=subprocess.PIPE,
+            universal_newlines=True )
         out, err = p.communicate()
         dpkgs = out.split('\n')
         for dpkg in dpkgs:

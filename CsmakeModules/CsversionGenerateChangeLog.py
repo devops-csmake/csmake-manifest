@@ -32,7 +32,6 @@
 # </copyright>
 from Csmake.CsmakeModule import CsmakeModule
 from CsmakeProviders.GitProvider import GitProvider
-import urlparse
 from datetime import datetime
 import sys
 import yaml
@@ -272,7 +271,7 @@ class CsversionGenerateChangeLog(CsmakeModule):
                 'new' : current['product']['build'],
                 'old' : previous['product']['build'],
                 '__info' : [] } }
-        for build, values in current['product']['build'].iteritems():
+        for build, values in current['product']['build'].items():
             if build not in previous['product']['build']:
                 changelog['product']['build']['__info'].append(
                     "Build %s, previous didn't have a command" % build )
@@ -289,13 +288,13 @@ class CsversionGenerateChangeLog(CsmakeModule):
 
         changelog['product']['metadata']={}
         changemeta = changelog['product']['metadata']
-        for build, metadata in current['product']['metadata'].iteritems():
+        for build, metadata in current['product']['metadata'].items():
             if build not in previous['product']['metadata']:
                 changemeta[build] = {
                     '__info' : ['build in current and not in previous'] }
                 continue
             changemeta[build] = {}
-            for key, value in metadata.iteritems():
+            for key, value in metadata.items():
                 if key not in previous['product']['metadata'][build]:
                     changemeta[build][key] = {
                         'new':value,
@@ -304,7 +303,7 @@ class CsversionGenerateChangeLog(CsmakeModule):
                     changemeta[build][key] = {
                         'new':value,
                         'old':previous['product']['metadata'][build][key] }
-            for key, value in previous['product']['metadata'][build].iteritems():
+            for key, value in previous['product']['metadata'][build].items():
                 if key not in metadata:
                     changemeta[build][key] = {
                         'new':"",
@@ -321,14 +320,14 @@ class CsversionGenerateChangeLog(CsmakeModule):
             return
         changesource = {}
         changelog['sources'] = changesource
-        for source, builds in current['sources'].iteritems():
+        for source, builds in current['sources'].items():
             if source not in previous['sources']:
                 changesource[source] = {
                     'new':builds,
                     'old':{},
                     '__info': ['source was not in previous'] }
                 continue
-            for build, info in builds.iteritems():
+            for build, info in builds.items():
                 if build not in previous['sources'][source]:
                     if source not in changesource:
                         changesource[source] = {
@@ -353,7 +352,7 @@ class CsversionGenerateChangeLog(CsmakeModule):
                             "Source changed formats for build: '%s'" % build )
                     else:
                         delta = False
-                        for key, value in info[1].iteritems():
+                        for key, value in info[1].items():
                             self.log.devdebug("previnfo: %s", str(previnfo))
                             if key not in previnfo[1]:
                                 if source not in changesource:
