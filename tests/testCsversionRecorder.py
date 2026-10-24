@@ -17,8 +17,9 @@
 """CsversionRecorder pickles __Csversion__ between phases and builds.
 
 The py3 hazards are the pickle file modes (must be binary) and the
-iteritems() -> items() conversion in the merge.  These tests use real files
-and the real pickle module.
+iteritems() -> items() conversion in the merge.  The file mode is the
+behaviour under test, so these use real files in a temp dir and the real
+pickle module.
 """
 import os
 import pickle
@@ -31,53 +32,75 @@ def git_entry(ref):
     return ('git', {'BRANCH': 'master', 'REF': ref})
 
 
+def dump(path, state):
+    with open(path, 'wb') as f:
+        pickle.dump(state, f)
+
+
+def load(path):
+    with open(path, 'rb') as f:
+        return pickle.load(f)
+
+
 class TestCsversionRecorder(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
         cls.module = helpers.import_plugin('CsversionRecorder')
 
-    def make_recorder(self, csversion=None):
+    def setUp(self):
+        self.workdir = helpers.make_tempdir(self)
+
+    def path(self, *parts):
+        return os.path.join(self.workdir, *parts)
+
+    def recorder(self, csversion=None):
         recorder = helpers.make_module(self.module.CsversionRecorder)
         if csversion is not None:
             recorder.env.env['__Csversion__'] = csversion
         return recorder
 
-    def test_default_writes_binary_pickle_that_loads_back(self):
-        workdir = helpers.make_tempdir(self)
-        record = os.path.join(workdir, 'nested', 'csversion.pickle')
+    def test_default_writes_a_binary_pickle_that_loads_back(self):
+        record = self.path('nested', 'csversion.pickle')
         state = {'sources': {'org/repo': {'img': git_entry('abc123')}}}
+        recorder = self.recorder(state)
 
-        result = self.make_recorder(state).default({'file': record})
+        result = recorder.default({'file': record})
 
         self.assertEqual(state, result)
-        with open(record, 'rb') as f:
-            self.assertEqual(state, pickle.load(f))
+        self.assertEqual(state, load(record))
+        self.assertEqual(state, recorder.env.env['__Csversion__'])
+        self.assertEqual(1, len(recorder.log.called('passed')))
 
-    def test_merge_order_other_records_then_file_then_env(self):
-        workdir = helpers.make_tempdir(self)
-        first = os.path.join(workdir, 'first.pickle')
-        second = os.path.join(workdir, 'second.pickle')
-        record = os.path.join(workdir, 'record.pickle')
-        missing = os.path.join(workdir, 'never-written.pickle')
-        for path, state in [
-                (first, {'sources': {'org/repo': {
-                    'a': git_entry('first'), 'b': git_entry('first')}}}),
-                (second, {'sources': {'org/repo': {
-                    'b': git_entry('second'), 'c': git_entry('second')}}}),
-                (record, {'sources': {'org/repo': {
-                    'c': git_entry('record'), 'd': git_entry('record')}},
-                    'product': {'build': {'img': {'BUILD': '1'}}}})]:
-            with open(path, 'wb') as f:
-                pickle.dump(state, f)
+    def test_default_without_state_in_the_environment_stashes_an_empty_record(self):
+        record = self.path('csversion.pickle')
+        recorder = self.recorder()
+
+        result = recorder.default({'file': record})
+
+        self.assertEqual({}, result)
+        self.assertEqual({}, load(record))
+        self.assertEqual(
+            [("No current __Csversion__ exists",)],
+            recorder.log.called('info'))
+
+    def test_default_merges_other_records_then_file_then_environment(self):
+        first, second = self.path('first.pickle'), self.path('second.pickle')
+        record = self.path('record.pickle')
+        dump(first, {'sources': {'org/repo': {
+            'a': git_entry('first'), 'b': git_entry('first')}}})
+        dump(second, {'sources': {'org/repo': {
+            'b': git_entry('second'), 'c': git_entry('second')}}})
+        dump(record, {
+            'sources': {'org/repo': {
+                'c': git_entry('record'), 'd': git_entry('record')}},
+            'product': {'build': {'img': {'BUILD': '1'}}}})
         env_state = {'sources': {
             'org/repo': {'d': git_entry('env')},
             'org/other': {'a': git_entry('env')}}}
-        # newline and comma delimited, with a file that does not exist
-        other_records = '%s\n%s,%s' % (first, missing, second)
 
-        result = self.make_recorder(env_state).default(
-            {'file': record, 'other-records': other_records})
+        result = self.recorder(env_state).default({
+            'file': record, 'other-records': '%s\n%s' % (first, second)})
 
         self.assertEqual(
             {'a': git_entry('first'),      # only in first
@@ -87,14 +110,53 @@ class TestCsversionRecorder(unittest.TestCase):
             result['sources']['org/repo'])
         self.assertEqual({'a': git_entry('env')}, result['sources']['org/other'])
         self.assertEqual({'build': {'img': {'BUILD': '1'}}}, result['product'])
-        # and what was stashed is exactly what was returned
-        with open(record, 'rb') as f:
-            self.assertEqual(result, pickle.load(f))
+        self.assertEqual(result, load(record))
 
-    def test_clean_removes_file_and_directory_it_created(self):
-        workdir = helpers.make_tempdir(self)
-        record = os.path.join(workdir, 'made-by-recorder', 'csversion.pickle')
-        recorder = self.make_recorder({'sources': {}})
+    def test_default_other_records_may_be_comma_separated_and_missing(self):
+        first, second = self.path('first.pickle'), self.path('second.pickle')
+        dump(first, {'sources': {'x': {'a': git_entry('first')}}})
+        dump(second, {'sources': {'y': {'a': git_entry('second')}}})
+        listed = ' %s , %s,%s' % (first, self.path('never-written'), second)
+
+        result = self.recorder().default({
+            'file': self.path('record.pickle'), 'other-records': listed})
+
+        self.assertEqual({'x', 'y'}, set(result['sources']))
+
+    def test_default_empty_other_records_option_is_ignored(self):
+        result = self.recorder({'sources': {}}).default({
+            'file': self.path('record.pickle'), 'other-records': ''})
+
+        self.assertEqual({'sources': {}}, result)
+
+    def test_default_carries_state_over_from_the_file_of_an_earlier_run(self):
+        options = {'file': self.path('csversion.pickle')}
+        self.recorder({'sources': {'org/repo': {'img': git_entry('one')}}}
+                      ).default(options)
+
+        later = self.recorder().default(options)
+
+        self.assertEqual(
+            {'sources': {'org/repo': {'img': git_entry('one')}}}, later)
+
+    def test_default_reads_a_pickle_written_by_python_2(self):
+        record = self.path('csversion.pickle')
+        # pickle protocol 0 as Python 2 wrote it, with STRING opcodes:
+        # {'sources': {'org/repo': {'img': ('git', {'REF': 'abc'})}}}
+        py2_pickle = (b"(dS'sources'\n(dS'org/repo'\n(dS'img'\n(S'git'\n"
+                      b"(dS'REF'\nS'abc'\nstsss.")
+        with open(record, 'wb') as f:
+            f.write(py2_pickle)
+
+        result = self.recorder().default({'file': record})
+
+        self.assertEqual(
+            {'sources': {'org/repo': {'img': ('git', {'REF': 'abc'})}}},
+            result)
+
+    def test_clean_removes_the_file_and_the_directory_it_created(self):
+        record = self.path('made-by-recorder', 'csversion.pickle')
+        recorder = self.recorder({'sources': {}})
         recorder.default({'file': record})
         self.assertTrue(os.path.exists(record))
 
@@ -102,6 +164,23 @@ class TestCsversionRecorder(unittest.TestCase):
 
         self.assertFalse(os.path.exists(record))
         self.assertFalse(os.path.exists(os.path.dirname(record)))
+        self.assertEqual(2, len(recorder.log.called('passed')))
+
+    def test_clean_without_a_file_still_passes(self):
+        recorder = self.recorder()
+
+        self.assertTrue(recorder.clean({'file': self.path('absent.pickle')}))
+
+    def test_clean_results_and_clean_build_clean_the_same_file(self):
+        for phase in ('clean_results', 'clean_build'):
+            with self.subTest(phase=phase):
+                record = self.path(phase, 'csversion.pickle')
+                recorder = self.recorder({'sources': {}})
+                recorder.default({'file': record})
+
+                self.assertTrue(getattr(recorder, phase)({'file': record}))
+
+                self.assertFalse(os.path.exists(record))
 
 
 if __name__ == '__main__':

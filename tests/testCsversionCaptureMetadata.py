@@ -16,8 +16,8 @@
 # </copyright>
 """CsversionCaptureMetadata sorts the section's options into product
 metadata (version_*) and build (build_*) records; the loop over the options
-is the converted .items() call.  Only the clock is replaced, so the
-timestamp is deterministic."""
+is the converted .items() call.  The section metadata and the clock are
+replaced by fakes, so the timestamp is deterministic."""
 import datetime
 import sys
 import types
@@ -25,6 +25,8 @@ import unittest
 from unittest import mock
 
 from . import helpers
+
+BUILT_AT = '2024-01-02T03:04:05Z'
 
 
 class TestCsversionCaptureMetadata(unittest.TestCase):
@@ -48,13 +50,11 @@ class TestCsversionCaptureMetadata(unittest.TestCase):
     def product(self):
         return self.capture.env.env['__Csversion__']['product']
 
-    def test_version_and_build_options_are_recorded(self):
+    def test_build_records_version_and_build_options(self):
         self.assertTrue(self.capture.build({
             'tag': 'img',
             'version_description': ' A product ',
-            'version_blank': '   ',
             'build_BUILD': '42',
-            'build_blank': '',
             'unrelated': 'ignored'}))
 
         self.assertEqual(
@@ -62,12 +62,31 @@ class TestCsversionCaptureMetadata(unittest.TestCase):
                      'description': 'A product'}},
             self.product()['metadata'])
         self.assertEqual(
-            {'img': {'time': '2024-01-02T03:04:05Z',
+            {'img': {'time': BUILT_AT,
                      'command': ' '.join(sys.argv),
                      'BUILD': '42'}},
             self.product()['build'])
+        self.assertEqual(1, len(self.capture.log.called('passed')))
 
-    def test_amend_adds_to_the_existing_records(self):
+    def test_build_ignores_blank_options(self):
+        self.capture.build({
+            'tag': 'img', 'version_blank': '   ', 'build_blank': ''})
+
+        self.assertNotIn('blank', self.product()['metadata']['img'])
+        self.assertNotIn('blank', self.product()['build']['img'])
+
+    def test_build_keeps_other_tags_and_warns_when_a_tag_is_redone(self):
+        self.capture.build({'tag': 'one', 'build_BUILD': '1'})
+        self.capture.build({'tag': 'two', 'build_BUILD': '2'})
+        self.assertEqual([], self.capture.log.called('warning'))
+
+        self.capture.build({'tag': 'one', 'build_BUILD': '3'})
+
+        self.assertEqual({'one', 'two'}, set(self.product()['build']))
+        self.assertEqual('3', self.product()['build']['one']['BUILD'])
+        self.assertEqual(2, len(self.capture.log.called('warning')))
+
+    def test_build_amend_adds_to_the_existing_records(self):
         self.capture.build({'tag': 'img', 'build_BUILD': '42'})
 
         self.assertTrue(self.capture.build({
@@ -78,9 +97,33 @@ class TestCsversionCaptureMetadata(unittest.TestCase):
             {'name': 'Prod', 'version-full': '1.2.3', 'extra': 'more'},
             self.product()['metadata']['img'])
         self.assertEqual(
-            {'time': '2024-01-02T03:04:05Z', 'command': ' '.join(sys.argv),
+            {'time': BUILT_AT, 'command': ' '.join(sys.argv),
              'BUILD': '42', 'WRAPPER': 'w'},
             self.product()['build']['img'])
+
+    def test_build_amend_without_any_metadata_fails(self):
+        self.assertIsNone(self.capture.build(
+            {'tag': 'img', 'amend': 'True', 'version_extra': 'x'}))
+
+        self.assertEqual(1, len(self.capture.log.called('failed')))
+        self.assertEqual([], self.capture.log.called('passed'))
+
+    def test_build_amend_of_an_unknown_tag_fails(self):
+        self.capture.build({'tag': 'img'})
+
+        self.assertIsNone(self.capture.build(
+            {'tag': 'other', 'amend': 'True', 'version_extra': 'x'}))
+
+        self.assertEqual(1, len(self.capture.log.called('failed')))
+        self.assertNotIn('other', self.product()['metadata'])
+
+    def test_build_amend_other_than_true_replaces_the_records(self):
+        self.capture.build({'tag': 'img', 'build_BUILD': '42'})
+
+        self.capture.build({'tag': 'img', 'amend': 'False', 'build_X': '1'})
+
+        self.assertNotIn('BUILD', self.product()['build']['img'])
+        self.assertEqual('1', self.product()['build']['img']['X'])
 
 
 if __name__ == '__main__':

@@ -14,17 +14,20 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # </copyright>
-"""Shared helpers for the csmake-manifest tests.
+"""Shared helpers for the csmake-manifest unit tests.
 
 The plugin modules are CsmakeModule subclasses, which need a whole csmake
 engine to construct.  The methods under test only touch self.env, self.log
 and a few helpers inherited from the base class, so the tests build the
 object with object.__new__() and attach just those attributes (make_module).
+
+External boundaries (subprocess, GitPython, csmake-providers) are replaced
+with fakes that honour the real API's type contract; see FakePopen.
 """
 import importlib
-import os
 import shutil
-import stat
+import subprocess
+import sys
 import tempfile
 import types
 import unittest
@@ -34,19 +37,29 @@ from . import csmake_alias
 
 
 # Import failures on these top-level names mean a dependency that lives
-# outside this repo is missing (csmake core, csmake-providers, GitPython,
-# PyYAML) and the test is skipped.  Any other ImportError, such as a stdlib
-# module that no longer exists under Python 3, is a real failure.
+# outside this repo is missing (csmake core, GitPython, PyYAML) and the test
+# is skipped.  Any other ImportError, such as a stdlib module that no longer
+# exists under Python 3, is a real failure.
 EXTERNAL_DEPENDENCIES = (
     'Csmake', 'CsmakeCore', 'CsmakeProviders', 'CsmakeModules',
     'git', 'gitdb', 'yaml')
 
 
-def import_plugin(name):
-    """Import CsmakeModules.<name>, or skip when a dependency is missing."""
+def import_plugin(name, stubs=None):
+    """Import CsmakeModules.<name> afresh, or skip when a dependency is missing.
+
+    stubs maps module names to stand-in modules that are installed in
+    sys.modules for the duration of the import only, so that a plugin's
+    'import git' or 'from CsmakeProviders.GitProvider import ...' binds the
+    stub whether or not the real package is installed.
+    """
     csmake_alias.install()
-    csmake_alias.add_sibling_checkout('csmake-providers')
     fullname = 'CsmakeModules.' + name
+    stubs = dict(stubs or {})
+    keys = list(stubs) + [fullname]
+    saved = dict((key, sys.modules.get(key)) for key in keys)
+    sys.modules.pop(fullname, None)
+    sys.modules.update(stubs)
     try:
         return importlib.import_module(fullname)
     except ImportError as e:
@@ -56,6 +69,12 @@ def import_plugin(name):
             raise unittest.SkipTest(
                 "cannot import %s: %s" % (fullname, e))
         raise
+    finally:
+        for key, module in saved.items():
+            if module is None:
+                sys.modules.pop(key, None)
+            else:
+                sys.modules[key] = module
 
 
 class FakeLog(object):
@@ -92,52 +111,76 @@ def make_tempdir(testcase):
     return path
 
 
-# Stand-in for 'sudo -E chroot <root> <command...>'.  It needs neither root
-# nor a real chroot: the command just runs with <root> as its working
-# directory, and absolute 'source /x' paths in a 'bash -c' script are mapped
-# to <root>/x, which is where a chroot would have found them.  The caller's
-# own VIRTUAL_ENV does not exist inside the chroot, so it is dropped.
-FAKE_SUDO = r'''#!/bin/bash
-while [ "$1" = "-E" ]; do shift; done
-if [ "$1" != "chroot" ]; then
-    echo "fake sudo: unexpected arguments: $*" >&2
-    exit 97
-fi
-shift
-root="$1"
-shift
-cd "$root" || exit 98
-unset VIRTUAL_ENV
-if [ "$1" = "/bin/bash" ] && [ "$2" = "-c" ]; then
-    script=$(printf '%s' "$3" | sed "s#source /#source $root/#g")
-    exec /bin/bash -c "$script"
-fi
-exec "$@"
-'''
+class FakeProcess(object):
+    """What Popen returns.  Like the real one, returncode stays None until
+    communicate() has run, and a stream that was not piped comes back None."""
+
+    def __init__(self, out, err, exit_status):
+        self.returncode = None
+        self._out = out
+        self._err = err
+        self._exit_status = exit_status
+
+    def communicate(self, input=None, timeout=None):
+        self.returncode = self._exit_status
+        return self._out, self._err
 
 
-def write_file(path, text, executable=False):
-    directory = os.path.dirname(path)
-    if directory and not os.path.isdir(directory):
-        os.makedirs(directory)
-    with open(path, 'w') as f:
-        f.write(text)
-    if executable:
-        os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP)
+def _stream(data, piped, text):
+    """The type contract of Popen.communicate(): bytes unless a text mode was
+    requested (universal_newlines / text / encoding / errors), then str with
+    universal newlines applied."""
+    if not piped:
+        return None
+    if text:
+        if isinstance(data, bytes):
+            data = data.decode('utf-8')
+        return data.replace('\r\n', '\n').replace('\r', '\n')
+    if isinstance(data, str):
+        data = data.encode('utf-8')
+    return data
 
 
-def install_fake_chroot_tools(testcase):
-    """Put a fake 'sudo' first on PATH; returns (bin_dir, chroot_dir).
+def popen_result(stdout='', stderr='', returncode=0):
+    return (stdout, stderr, returncode)
 
-    Further fake executables (dpkg-query, pip, ...) can be written into
-    bin_dir by the caller, and are found by the fake sudo through PATH.
+
+class FakePopen(object):
+    """Scripted stand-in for subprocess.Popen.
+
+    Each call consumes the next scripted popen_result() (or raises it, when
+    it is an exception).  Output scripted as str is encoded to bytes unless
+    the caller asked for text, so a caller that forgot universal_newlines
+    gets bytes, exactly as with the real thing.  Every call is recorded in
+    .calls as (args, kwargs).
     """
-    bin_dir = make_tempdir(testcase)
-    chroot_dir = make_tempdir(testcase)
-    write_file(os.path.join(bin_dir, 'sudo'), FAKE_SUDO, executable=True)
-    patcher = mock.patch.dict(
-        os.environ,
-        {'PATH': bin_dir + os.pathsep + os.environ.get('PATH', os.defpath)})
+
+    def __init__(self, *results):
+        self.results = list(results)
+        self.calls = []
+
+    def __call__(self, args, **kwargs):
+        self.calls.append((args, kwargs))
+        if not self.results:
+            raise AssertionError("unexpected Popen call: %r" % (args,))
+        result = self.results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        stdout, stderr, returncode = result
+        text = bool(kwargs.get('universal_newlines') or kwargs.get('text')
+                    or kwargs.get('encoding') or kwargs.get('errors'))
+        return FakeProcess(
+            _stream(stdout, kwargs.get('stdout') == subprocess.PIPE, text),
+            _stream(stderr, kwargs.get('stderr') == subprocess.PIPE, text),
+            returncode)
+
+
+def patch_popen(testcase, module, *results):
+    """Replace the 'subprocess' a plugin module uses with one whose Popen is a
+    FakePopen scripted with results; returns the FakePopen."""
+    fake = FakePopen(*results)
+    patched = types.SimpleNamespace(Popen=fake, PIPE=subprocess.PIPE)
+    patcher = mock.patch.object(module, 'subprocess', patched)
     patcher.start()
     testcase.addCleanup(patcher.stop)
-    return bin_dir, chroot_dir
+    return fake
