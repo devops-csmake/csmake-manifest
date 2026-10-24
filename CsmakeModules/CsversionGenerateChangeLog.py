@@ -444,7 +444,7 @@ class CsversionGenerateChangeLog(CsmakeModule):
             previous = {}
             for spec in group['previous']:
                 with open(spec['location']) as f:
-                    mani = yaml.load(f)
+                    mani = yaml.safe_load(f)
                 previous.update(mani)
             if len(previous) == 0:
                 self.log.warning("**maps did not yield any manifests to map")
@@ -463,7 +463,7 @@ class CsversionGenerateChangeLog(CsmakeModule):
                     return None
                 for spec in group['current']:
                     with open(spec['location']) as f:
-                        mani = yaml.load(f)
+                        mani = yaml.safe_load(f)
                     current.update(mani)
                 if len(current) == 0:
                     self.log.warning(
