@@ -30,7 +30,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # </copyright>
-from Csmake.CsmakeModule import CsmakeModule
+from CsmakeCore.CsmakeModule import CsmakeModule
 import subprocess
 import re
 import os.path
@@ -101,10 +101,11 @@ class CsversionCollectPips(CsmakeModule):
         versdict = self.env.env['__Csversion__']['sources']
         mountpath = options['chroot']
         p = subprocess.Popen(
-            'sudo -E chroot %s find . | grep "bin/activate_this"' % mountpath, 
+            'sudo -E chroot %s find . | grep "bin/activate_this"' % mountpath,
             shell=True,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE )
+            stderr=subprocess.PIPE,
+            universal_newlines=True )
         out, err = p.communicate()
         venvs = []
         if p.returncode != 0:
@@ -122,7 +123,8 @@ class CsversionCollectPips(CsmakeModule):
         p = subprocess.Popen(
             ['sudo', '-E', 'chroot', mountpath, 'pip', 'list'],
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE )
+            stderr=subprocess.PIPE,
+            universal_newlines=True )
         out, err = p.communicate()
         #Iterate through all the freeze results
         specs = out.split('\n')
@@ -143,7 +145,8 @@ class CsversionCollectPips(CsmakeModule):
                        delim ),
                 shell=True,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE )
+                stderr=subprocess.PIPE,
+                universal_newlines=True )
             out, err = p.communicate()
             if p.returncode != 0:
                 self.log.info("Could not get information on %s", venv)

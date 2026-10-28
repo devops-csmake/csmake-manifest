@@ -30,8 +30,8 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # </copyright>
-from Csmake.CsmakeModule import CsmakeModule
-import urlparse
+from CsmakeCore.CsmakeModule import CsmakeModule
+import urllib.parse
 import git
 import os.path
 
@@ -149,7 +149,7 @@ class CsversionRecordThisGit(CsmakeModule):
             branch = "(local) %s" % branchname
         else:
             url = remote.url
-            reponame = urlparse.urlparse(url).path
+            reponame = urllib.parse.urlparse(url).path
             branch = str(remoteref)
             branch = '/'.join(branch.split('/')[1:])
 

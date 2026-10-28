@@ -30,8 +30,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 # </copyright>
-from Csmake.CsmakeModule import CsmakeModule
-import urlparse
+from CsmakeCore.CsmakeModule import CsmakeModule
 from datetime import datetime
 import sys
 
@@ -130,7 +129,7 @@ class CsversionCaptureMetadata(CsmakeModule):
                 'time' : t,
                 'command' : ' '.join(sys.argv) }
             versdict['build'][options['tag']] = builddict
-        for name, option in options.iteritems():
+        for name, option in options.items():
             option = option.strip()
             if len(option) == 0:
                 continue
